@@ -115,7 +115,25 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+        // Firebase Konfigürasyon Bilgilerin
+        const firebaseConfig = {
+            apiKey: "AIzaSyABvLkPkrNsav3pG4r7Yd-Ppul-90x86Ss",
+            authDomain: "green-alliance-c6bd5.firebaseapp.com",
+            projectId: "green-alliance-c6bd5",
+            storageBucket: "green-alliance-c6bd5.firebasestorage.app",
+            messagingSenderId: "1397997200",
+            appId: "1:1397997200:web:232bd2ee218cb513886215",
+            databaseURL: "https://green-alliance-c6bd5-default-rtdb.firebaseio.com"
+        };
+
+        // Firebase ve Veritabanı İlklendirmesi
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
         
@@ -135,7 +153,7 @@
 
         // Bebek Yoda Görseli Tanımlaması
         const yodaImg = new Image();
-        let yoda = { x: 160, y: 410, width: 80, height: 80, speed: 8 }; // Tuş hassasiyeti için speed optimize edildi
+        let yoda = { x: 160, y: 410, width: 80, height: 80, speed: 8 };
         let items = [];
         let itemSpawnInterval;
         let mouseX = 160;
@@ -182,7 +200,7 @@
             e.preventDefault();
         }, { passive: false });
 
-        // Gelişmiş Klavye Dinleyicileri (Sürüş + Tırmanma tek çatı altında)
+        // Gelişmiş Klavye Dinleyicileri
         window.addEventListener("keydown", e => {
             keys[e.code] = true;
             if (e.code === "Space") {
@@ -308,7 +326,6 @@
                 }
             }
 
-            // --- HİBRİT SÜRÜŞ SİSTEMİ YAPISI ---
             if (currentPhase === 'AUTO') {
                 let targetSeed = items.find(i => i.type === 'seed');
                 if (targetSeed) {
@@ -318,17 +335,14 @@
             } else if (currentPhase === 'ENDGAME' && climbProgress > 0) {
                 yoda.y = 410 - (climbProgress * 2.5);
             } else if (!watchdogActive) {
-                // Eğer klavyedeki Sol ok veya A tuşuna basılıyorsa
                 if (keys["ArrowLeft"] || keys["KeyA"]) {
                     yoda.x -= yoda.speed;
-                    mouseX = yoda.x; // Fareyi senkronize et ki çakışmasın
+                    mouseX = yoda.x;
                 } 
-                // Eğer Sağ ok veya D tuşuna basılıyorsa
                 else if (keys["ArrowRight"] || keys["KeyD"]) {
                     yoda.x += yoda.speed;
-                    mouseX = yoda.x; // Fareyi senkronize et ki çakışmasın
+                    mouseX = yoda.x;
                 } 
-                // Hiçbir tuşa basılmıyorsa akıcı fare kontrolüne dön
                 else {
                     let diff = mouseX - yoda.x;
                     yoda.x += diff * 0.3;
@@ -413,7 +427,6 @@
                 ctx.drawImage(yodaImg, yoda.x, yoda.y, yoda.width, yoda.height);
             } else {
                 ctx.font = "50px Arial";
-                // Tatlı bir bebek yoda emojisi kombinasyonu (👶 + 💚)
                 ctx.fillText("👶💚", yoda.x + 5, yoda.y + 55);
             }
 
@@ -445,33 +458,52 @@
 
             document.getElementById("rankInputArea").style.display = "block";
             switchScreen('endScreen');
-            showLeaderboard();
         }
 
+        // --- NEW: FIREBASE BULUT SKOR KAYDETME YAPISI ---
         function saveScore() {
             const name = document.getElementById("playerName").value.trim() || "Anonymous";
             const team = document.getElementById("playerTeam").value.trim() || "0000";
             
-            let data = JSON.parse(localStorage.getItem("frc_biocore_board")) || [];
-            data.push({ name: name, team: team, score: score });
-            data.sort((a, b) => b.score - a.score);
-            data = data.slice(0, 5);
-            
-            localStorage.setItem("frc_biocore_board", JSON.stringify(data));
+            // Veriyi Firebase Realtime Database bulutuna fırlatıyoruz
+            push(ref(db, 'scores'), {
+                name: name,
+                team: team,
+                score: parseInt(score) || 0,
+                timestamp: Date.now()
+            }).then(() => {
+                console.log("Skor buluta uçtu! 🚀");
+            }).catch((err) => {
+                console.error("Buluta yazma hatası: ", err);
+            });
+
             document.getElementById("rankInputArea").style.display = "none";
-            showLeaderboard();
         }
 
-        function showLeaderboard() {
-            const data = JSON.parse(localStorage.getItem("frc_biocore_board")) || [];
-            const body = document.getElementById("leaderboardBody");
-            body.innerHTML = "";
+        // --- NEW: REALTIME DATABASE DINLEYICISI (HERKES ICIN ANLIK GÜNCELLEME) ---
+        // En yüksek 10 skoru buluttan çeker ve veri değiştikçe otomatik tetiklenir
+        const scoresRef = query(ref(db, 'scores'), orderByChild('score'), limitToLast(10));
+        onValue(scoresRef, (snapshot) => {
+            const data = snapshot.val();
+            let leaderboardArray = [];
             
-            data.forEach((player, i) => {
-                const row = `<tr><td>${i+1}</td><td>${player.name}</td><td>#${player.team}</td><td style="color:#8BC34A; font-weight:bold;">${player.score}</td></tr>`;
-                body.innerHTML += row;
-            });
-        }
+            if (data) {
+                Object.keys(data).forEach(key => {
+                    leaderboardArray.push(data[key]);
+                });
+                // Büyükten küçüğe sıralama yapısı
+                leaderboardArray.sort((a, b) => b.score - a.score);
+            }
+            
+            const body = document.getElementById("leaderboardBody");
+            if (body) {
+                body.innerHTML = "";
+                leaderboardArray.forEach((player, i) => {
+                    const row = `<tr><td>${i+1}</td><td>${player.name}</td><td>#${player.team}</td><td style="color:#8BC34A; font-weight:bold;">${player.score}</td></tr>`;
+                    body.innerHTML += row;
+                });
+            }
+        });
 
         function resetGame() {
             startGame(alliance);
